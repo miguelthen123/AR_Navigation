@@ -91,7 +91,6 @@ public class UIManager : MonoBehaviour
         if (uiRoot != null)
             uiRoot.SetActive(false);
         DeactivateAllWays();
-        ClearGameObject();
     }
 
     // ==============================

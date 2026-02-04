@@ -10,15 +10,13 @@ public class MultiImageSpawner : MonoBehaviour
 
     [SerializeField] private UIManager uiManager;
 
-    [Header("Prefabs (match by image name)")]
+    [Header("Prefabs (match by reference image name)")]
     public GameObject image1Prefab;
     public GameObject image2Prefab;
 
-    // Spawned objects by image name
-    private Dictionary<string, GameObject> spawnedObjects = new Dictionary<string, GameObject>();
-
-    // Track last active image (for easy cleanup)
-    private string lastTrackedImage = null;
+    // Only ONE object allowed at any time
+    private GameObject currentSpawnedObject = null;
+    private string currentImageName = null;
 
     void Awake()
     {
@@ -42,63 +40,47 @@ public class MultiImageSpawner : MonoBehaviour
 
         foreach (var trackedImage in eventArgs.updated)
             ProcessImage(trackedImage);
-
-        foreach (var trackedImage in eventArgs.removed)
-            OnImageRemoved(trackedImage);
     }
 
     void ProcessImage(ARTrackedImage trackedImage)
     {
+        // Only react when image is actively tracked
+        if (trackedImage.trackingState != TrackingState.Tracking)
+            return;
+
         string imageName = trackedImage.referenceImage.name;
         GameObject prefabToSpawn = GetPrefab(imageName);
+        if (prefabToSpawn == null)
+            return;
 
-        if (prefabToSpawn == null) return;
-
-        // --- THE FIX ---
-        // Check if the dictionary contains the key, 
-        // AND if the object assigned to that key is actually missing/destroyed.
-        bool needsSpawn = !spawnedObjects.ContainsKey(imageName) || spawnedObjects[imageName] == null;
-
-        if (needsSpawn)
+        // 🔥 HARD RULE: destroy existing object if image changed
+        if (currentSpawnedObject != null && currentImageName != imageName)
         {
-            GameObject spawned = Instantiate(
+            Destroy(currentSpawnedObject);
+            currentSpawnedObject = null;
+            currentImageName = null;
+        }
+
+        // Spawn if nothing exists
+        if (currentSpawnedObject == null)
+        {
+            currentSpawnedObject = Instantiate(
                 prefabToSpawn,
                 trackedImage.transform.position,
                 trackedImage.transform.rotation
             );
 
-            spawned.transform.parent = null;
-
-            // Update or add the entry in the dictionary
-            spawnedObjects[imageName] = spawned;
-
-            Debug.Log($"Spawned/Respawned persistent object for {imageName}");
+            currentImageName = imageName;
+            Debug.Log($"Spawned prefab for {imageName}");
         }
 
-        // Update pose ONLY while tracking
-        if (trackedImage.trackingState == TrackingState.Tracking)
-        {
-            // Always check for null before moving, just in case it was destroyed this frame
-            if (spawnedObjects[imageName] != null)
-            {
-                spawnedObjects[imageName].transform.SetPositionAndRotation(
-                    trackedImage.transform.position,
-                    trackedImage.transform.rotation
-                );
-            }
+        // Always update pose
+        currentSpawnedObject.transform.SetPositionAndRotation(
+            trackedImage.transform.position,
+            trackedImage.transform.rotation
+        );
 
-            lastTrackedImage = imageName;
-            uiManager.OnImageTracked(imageName);
-        }
-        else
-        {
-            uiManager.OnImageLost();
-        }
-    }
-
-    void OnImageRemoved(ARTrackedImage trackedImage)
-    {
-        uiManager.OnImageLost();
+        uiManager.OnImageTracked(imageName);
     }
 
     GameObject GetPrefab(string imageName)
@@ -113,35 +95,21 @@ public class MultiImageSpawner : MonoBehaviour
         }
     }
 
-    // --- PUBLIC API ---
+    // ---------- PUBLIC API ----------
 
-    public void DestroySpawnedObject(string imageName)
+    /// <summary>
+    /// Destroy whatever object is currently spawned (no matter what image)
+    /// </summary>
+    public void DestroyCurrentObject()
     {
-        if (spawnedObjects.ContainsKey(imageName) && spawnedObjects[imageName] != null)
+        if (currentSpawnedObject != null)
         {
-            Destroy(spawnedObjects[imageName]);
-            // Important: Explicitly remove from dictionary so the "ProcessImage" 
-            // logic sees it as ready to spawn again.
-            spawnedObjects.Remove(imageName);
-            
-            if (lastTrackedImage == imageName) lastTrackedImage = null;
-            Debug.Log($"Destroyed {imageName}");
-        }
-    }
+            Destroy(currentSpawnedObject);
+            currentSpawnedObject = null;
+            currentImageName = null;
+            uiManager.OnImageLost();
 
-    public void DestroyAllSpawnedObjects()
-    {
-        foreach (var key in new List<string>(spawnedObjects.Keys))
-        {
-            DestroySpawnedObject(key);
+            Debug.Log("Destroyed current spawned object");
         }
-        spawnedObjects.Clear();
-        lastTrackedImage = null;
-    }
-
-    public void DestroyLastTrackedObject()
-    {
-        if (!string.IsNullOrEmpty(lastTrackedImage))
-            DestroySpawnedObject(lastTrackedImage);
     }
 }
